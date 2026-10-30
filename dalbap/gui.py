@@ -324,7 +324,7 @@ class App(tk.Tk):
         self.geometry("1360x820"); self.minsize(1180, 700)
         self.configure(bg=BG)
         self._load_icon()
-        self._fonts(); self._style()
+        self._fonts(); self._style(); self._install_cursors()
         self.sel = datetime.date.today()
         self.server_error = None
         self._thumb = None
@@ -377,15 +377,13 @@ class App(tk.Tk):
         st.configure("Treeview.Heading", font=self.f_bold, background=HEAD, foreground=TEXT, relief="flat", padding=(6, 5))
         st.map("Treeview", background=[("selected", SEL)], foreground=[("selected", TEXT)])
         st.map("Treeview.Heading", background=[("active", "#e2e7ee")])
-        st.configure("TButton", padding=(10, 6))
-        st.configure("Accent.TButton", padding=(10, 8), font=self.f_bold, background=ACCENT, foreground="white")
+        st.configure("TButton", padding=(12, 7))
+        st.configure("Accent.TButton", padding=(12, 8), font=self.f_bold, background=ACCENT, foreground="white")
         st.map("Accent.TButton", background=[("active", ACCENT_HOVER), ("disabled", LINE)],
                foreground=[("disabled", SUB)])
-        st.configure("TNotebook", background=CARD, borderwidth=0)
-        st.configure("TNotebook.Tab", padding=(14, 6))
         st.map("TButton", background=[("active", HEAD)])
         st.configure("TNotebook", background=CARD, borderwidth=0)
-        st.configure("TNotebook.Tab", padding=(14, 6))
+        st.configure("TNotebook.Tab", padding=(16, 8))
         st.configure("TLabelframe", background=CARD, bordercolor=LINE)
         st.configure("TLabelframe.Label", background=CARD, foreground=SUB, font=self.f_small)
         for w in ("TEntry", "TSpinbox", "TCombobox"):
@@ -396,6 +394,24 @@ class App(tk.Tk):
                    darkcolor=[("focus", ACCENT)], fieldbackground=[("readonly", HEAD), ("disabled", BG)])
         self.option_add("*TEntry*Font", "TkTextFont"); self.option_add("*TSpinbox*Font", "TkTextFont")
         self.option_add("*TCombobox*Font", "TkTextFont"); self.option_add("*TCombobox*Listbox.font", "TkTextFont")
+
+    def _install_cursors(self):
+        """버튼·탭에 손가락 커서 (웹앱 느낌)."""
+        def _hand(_e):
+            try:
+                _e.widget.configure(cursor="hand2")
+            except tk.TclError:
+                pass
+
+        def _reset(_e):
+            try:
+                _e.widget.configure(cursor="")
+            except tk.TclError:
+                pass
+
+        for cls in ("TButton", "Accent.TButton"):
+            self.bind_class(cls, "<Enter>", _hand, add="+")
+            self.bind_class(cls, "<Leave>", _reset, add="+")
 
     def _tree(self, parent, cols, heads, widths, anchors=None, height=None, min_table_width=None):
         """열 최소 너비 유지 + 가로/세로 스크롤 (창이 좁아져도 글꼴 축소 없음)."""
@@ -455,7 +471,7 @@ class App(tk.Tk):
         self.st_data = tk.Label(sbar, bg=HEAD, fg=SUB, padx=12); self.st_data.pack(side="left")
         self.st_msg = tk.Label(sbar, bg=HEAD, fg=ACCENT, padx=12); self.st_msg.pack(side="right")
 
-        main = tk.Frame(self, bg=BG); main.pack(fill="both", expand=True, padx=12, pady=12)
+        main = tk.Frame(self, bg=BG); main.pack(fill="both", expand=True, padx=14, pady=14)
         main.columnconfigure(1, weight=1, minsize=MIN_CENTER_WIDTH)
         main.rowconfigure(0, weight=1)
         self._build_calendar(main); self._build_day(main); self._build_customers(main)
@@ -491,7 +507,7 @@ class App(tk.Tk):
         self.chip = {}
         for k, t, c in (("dep", "충전", PLUS), ("ded", "식사 차감", MINUS), ("rc", "영수증", TEXT)):
             f = tk.Frame(chips, bg=HEAD, highlightbackground=LINE, highlightthickness=1)
-            f.pack(side="left", padx=(0, 10))
+            f.pack(side="left", padx=(0, 12), pady=(0, 2))
             tk.Label(f, text=t, bg=HEAD, fg=SUB, font=self.f_small).pack(anchor="w", padx=12, pady=(6, 0))
             v = tk.Label(f, bg=HEAD, fg=c, font="TitleFont"); v.pack(anchor="w", padx=12, pady=(0, 6))
             self.chip[k] = v
