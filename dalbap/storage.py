@@ -47,6 +47,10 @@ def daily_backup(data_dir: Path, keep_days: int = 60):
                 if (p / "receipts.json").exists():
                     (tmp / "receipts").mkdir()
                     shutil.copy2(p / "receipts.json", tmp / "receipts" / "receipts.json")
+            elif p.name == "signatures":  # 서명 목록(JSON)만 백업
+                if (p / "signatures.json").exists():
+                    (tmp / "signatures").mkdir()
+                    shutil.copy2(p / "signatures.json", tmp / "signatures" / "signatures.json")
             elif p.is_dir():
                 shutil.copytree(p, tmp / p.name)
             elif p.suffix == ".json":

@@ -90,11 +90,28 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none}
 .btn-confirm:disabled{background:#9ca3af}
 .msg{text-align:center;padding:40px 20px;font-size:18px}
 .msg.ok{color:#1e7e34}.msg.err{color:#b42318}
+.card{background:#fff;margin:20px;padding:20px;border-radius:12px;border:1px solid #e3e5e8}
+.card h1{font-size:20px;margin:0 0 16px}
+.card input{width:100%;box-sizing:border-box;font-size:18px;padding:12px;border:1px solid #ccc;border-radius:8px}
+.card button{display:block;width:100%;padding:16px;font-size:18px;font-weight:700;border:0;border-radius:10px;background:#1f5fae;color:#fff;margin-top:16px}
+.card .err{color:#b42318;margin-top:8px}
 </style></head><body>
 {% if expired %}
 <div class="msg err">서명 요청이 만료되었습니다.<br>PC에서 다시 충전을 시작해 주세요.</div>
 {% elif done %}
 <div class="msg ok">✅ 서명 완료!<br>충전이 완료되었습니다.</div>
+{% elif need_pin %}
+<form class="card" method="post" action="{{url_for('signature_login', sig_token=token)}}">
+<h1>사장님 PIN</h1>
+<div style="margin-bottom:12px;color:#666">서명을 받으려면 사장님 PIN을 입력하세요.</div>
+<div style="background:#fff8e1;padding:12px;border-radius:8px;margin-bottom:16px">
+<div style="font-weight:700">{{name}} 님</div>
+<div style="font-size:20px;color:#1f5fae;font-weight:800">{{"{:,}".format(amount)}}원 충전</div>
+</div>
+<input name="pin" type="password" inputmode="numeric" autocomplete="off" autofocus placeholder="PIN 입력">
+{% if pin_error %}<div class="err">{{pin_error}}</div>{% endif %}
+<button type="submit">확인</button>
+</form>
 {% else %}
 <div class="container">
 <div class="info">
@@ -311,20 +328,55 @@ def create_app(ledger):
         return render_template_string(PAGE, c=c, bal=bal, rows=ledger.history(c["id"])[:200],
                                       kind=TYPE_KO, price=price, meals=max(bal, 0) // price)
 
+    def sig_owner_authed(sig_token):
+        return session.get("sig_owner") == sig_token
+
     @app.route("/sig/<sig_token>")
     def signature_pad(sig_token):
         req = ledger.get_signature_request(sig_token)
         if not req:
             return render_template_string(SIGNATURE_PAD_PAGE, expired=True, done=False, 
-                                         name="", amount=0, token=sig_token)
+                                         need_pin=False, name="", amount=0, token=sig_token,
+                                         pin_error=None)
+        if not sig_owner_authed(sig_token):
+            return render_template_string(SIGNATURE_PAD_PAGE, expired=False, done=False,
+                                         need_pin=True, name=req["name"], amount=req["amount"],
+                                         token=sig_token, pin_error=None)
         return render_template_string(SIGNATURE_PAD_PAGE, expired=False, done=False,
-                                     name=req["name"], amount=req["amount"], token=sig_token)
+                                     need_pin=False, name=req["name"], amount=req["amount"],
+                                     token=sig_token, pin_error=None)
+
+    @app.route("/sig/<sig_token>/login", methods=["POST"])
+    def signature_login(sig_token):
+        req = ledger.get_signature_request(sig_token)
+        if not req:
+            return render_template_string(SIGNATURE_PAD_PAGE, expired=True, done=False,
+                                         need_pin=False, name="", amount=0, token=sig_token,
+                                         pin_error=None)
+        ip = request.remote_addr
+        n, until = fails.get(ip, [0, 0])
+        if time.time() < until:
+            return render_template_string(SIGNATURE_PAD_PAGE, expired=False, done=False,
+                                         need_pin=True, name=req["name"], amount=req["amount"],
+                                         token=sig_token, pin_error="잠시 후 다시 시도하세요 (5분 잠금)")
+        pin = request.form.get("pin", "")
+        if ledger.check_owner_pin(pin):
+            fails.pop(ip, None)
+            session["sig_owner"] = sig_token
+            return redirect(url_for("signature_pad", sig_token=sig_token))
+        n += 1
+        fails[ip] = [0, time.time() + 300] if n >= 5 else [n, 0]
+        return render_template_string(SIGNATURE_PAD_PAGE, expired=False, done=False,
+                                     need_pin=True, name=req["name"], amount=req["amount"],
+                                     token=sig_token, pin_error="PIN이 틀렸습니다")
 
     @app.route("/sig/<sig_token>/submit", methods=["POST"])
     def signature_submit(sig_token):
         req = ledger.get_signature_request(sig_token)
         if not req:
             return "서명 요청이 만료되었습니다", 400
+        if not sig_owner_authed(sig_token):
+            return "인증이 필요합니다", 403
         sig_file = request.files.get("signature")
         if not sig_file:
             return "서명이 없습니다", 400

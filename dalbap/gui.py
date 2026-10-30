@@ -743,11 +743,12 @@ class App(tk.Tk):
                 return
             updated_req = self.L.get_signature_request(req["token"])
             if updated_req is None:
+                reqs = self.L._pending_signature_requests()
                 if not any(r["token"] == req["token"] and r.get("completed") 
-                          for r in self.L._pending_signature_requests(self.L).values()):
+                          for r in reqs.values()):
                     status_lbl.config(text="❌ 서명 요청이 만료되었습니다", fg=MINUS)
                     return
-            reqs = self.L._pending_signature_requests(self.L)
+            reqs = self.L._pending_signature_requests()
             done_req = reqs.get(req["token"])
             if done_req and done_req.get("completed"):
                 completed["done"] = True

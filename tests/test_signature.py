@@ -129,7 +129,7 @@ def login(cl, L, pin="1234"):
     return cl.post(f"/o/{L.owner_token()}/login", data={"pin": pin})
 
 
-def test_signature_pad_page(web):
+def test_signature_pad_requires_pin(web):
     L, c, cl = web
     req = L.create_signature_request(c["id"], 100000)
     r = cl.get(f"/sig/{req['token']}")
@@ -137,6 +137,21 @@ def test_signature_pad_page(web):
     assert r.status_code == 200
     assert "웹손님" in html
     assert "100,000" in html
+    assert "PIN" in html
+    assert "서명해 주세요" not in html
+
+
+def sig_login(cl, token, pin="1234"):
+    return cl.post(f"/sig/{token}/login", data={"pin": pin})
+
+
+def test_signature_pad_after_pin(web):
+    L, c, cl = web
+    req = L.create_signature_request(c["id"], 100000)
+    sig_login(cl, req["token"])
+    r = cl.get(f"/sig/{req['token']}")
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200
     assert "서명해 주세요" in html
 
 
@@ -147,9 +162,20 @@ def test_signature_pad_expired(web):
     assert "만료" in html
 
 
-def test_signature_submit(web):
+def test_signature_submit_requires_pin(web):
     L, c, cl = web
     req = L.create_signature_request(c["id"], 80000)
+    r = cl.post(f"/sig/{req['token']}/submit",
+                data={"signature": (io.BytesIO(sig_png()), "sig.png")},
+                content_type="multipart/form-data")
+    assert r.status_code == 403
+    assert L.balance(c["id"]) == 0
+
+
+def test_signature_submit_after_pin(web):
+    L, c, cl = web
+    req = L.create_signature_request(c["id"], 80000)
+    sig_login(cl, req["token"])
     r = cl.post(f"/sig/{req['token']}/submit",
                 data={"signature": (io.BytesIO(sig_png()), "sig.png")},
                 content_type="multipart/form-data")
@@ -163,6 +189,16 @@ def test_signature_submit_expired(web):
                 data={"signature": (io.BytesIO(sig_png()), "sig.png")},
                 content_type="multipart/form-data")
     assert r.status_code == 400
+
+
+def test_signature_pin_lockout(web):
+    L, c, cl = web
+    req = L.create_signature_request(c["id"], 50000)
+    for _ in range(5):
+        sig_login(cl, req["token"], "0000")
+    r = sig_login(cl, req["token"])
+    html = r.get_data(as_text=True)
+    assert "잠금" in html or r.status_code == 429
 
 
 def test_owner_page_shows_signature_requests(web):
@@ -184,3 +220,40 @@ def test_customer_cannot_access_signatures(web):
     assert "signatures" not in html
     for p in [f"/{sig['file']}", "/signatures"]:
         assert cl.get(p).status_code in (404, 405, 400)
+
+
+# ---------------- 추가 테스트: 백업, 거래 기록 ----------------
+def test_signatures_in_daily_backup(tmp_path):
+    from dalbap.storage import daily_backup
+    import shutil
+    L = Ledger(tmp_path)
+    c = L.add_customer("백업테스트")
+    req = L.create_signature_request(c["id"], 100000)
+    L.complete_signature_request(req["token"], sig_png())
+    backup_dir = tmp_path / "backups" / "2026-10-30"
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
+    backup_dir = daily_backup(tmp_path)
+    assert (backup_dir / "signatures" / "signatures.json").exists()
+
+
+def test_deposit_records_signature_in_tx(L):
+    c = L.add_customer("거래기록")
+    req = L.create_signature_request(c["id"], 100000)
+    result = L.complete_signature_request(req["token"], sig_png())
+    tx = result["tx"]
+    assert tx.get("signature") is not None
+    assert tx["signature"].startswith("signatures/")
+    day_txs = L.day(tx["date"])
+    deposit_tx = next(t for t in day_txs if t["id"] == tx["id"])
+    assert deposit_tx.get("signature") is not None
+
+
+def test_history_includes_signature_tx(L):
+    c = L.add_customer("내역테스트")
+    req = L.create_signature_request(c["id"], 50000)
+    L.complete_signature_request(req["token"], sig_png())
+    history = L.history(c["id"])
+    assert len(history) == 1
+    assert history[0]["type"] == "deposit"
+    assert history[0]["amount"] == 50000
