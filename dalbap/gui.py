@@ -74,6 +74,109 @@ def ask_string(title, prompt, initialvalue="", show=None, parent=None):
     return res["v"]
 
 
+class SignatureDialog:
+    """PC용 서명 캔버스 다이얼로그. 마우스/터치스크린으로 서명."""
+    def __init__(self, parent, customer_name: str, amount: int):
+        self.result = None
+        self.strokes = []
+        self.current_stroke = []
+        
+        self.w = tk.Toplevel(parent, bg=CARD)
+        self.w.title("서명")
+        self.w.resizable(False, False)
+        self.w.transient(parent)
+        
+        f = tk.Frame(self.w, bg=CARD)
+        f.pack(padx=20, pady=16)
+        
+        tk.Label(f, text=f"{customer_name} 님", bg=CARD, fg=TEXT, 
+                 font=("TkDefaultFont", 16, "bold")).pack()
+        tk.Label(f, text=f"충전 금액: {amount:,}원", bg=CARD, fg=ACCENT,
+                 font=("TkDefaultFont", 14)).pack(pady=(4, 12))
+        tk.Label(f, text="아래에 서명해 주세요", bg=CARD, fg=SUB).pack()
+        
+        canvas_frame = tk.Frame(f, bg=LINE, highlightbackground=LINE, highlightthickness=2)
+        canvas_frame.pack(pady=8)
+        self.canvas = tk.Canvas(canvas_frame, width=400, height=200, bg="white",
+                                highlightthickness=0, cursor="pencil")
+        self.canvas.pack()
+        
+        self.canvas.bind("<Button-1>", self._start_stroke)
+        self.canvas.bind("<B1-Motion>", self._draw)
+        self.canvas.bind("<ButtonRelease-1>", self._end_stroke)
+        
+        bar = tk.Frame(f, bg=CARD)
+        bar.pack(fill="x", pady=(12, 0))
+        ttk.Button(bar, text="취소", command=self._cancel).pack(side="left")
+        ttk.Button(bar, text="다시 쓰기", command=self._clear).pack(side="left", padx=(8, 0))
+        self.ok_btn = ttk.Button(bar, text="확인", style="Accent.TButton", 
+                                  command=self._confirm, state="disabled")
+        self.ok_btn.pack(side="right")
+        
+        self.w.bind("<Escape>", lambda e: self._cancel())
+        self.w.update_idletasks()
+        if parent is not None:
+            x = parent.winfo_rootx() + (parent.winfo_width() - self.w.winfo_width()) // 2
+            y = parent.winfo_rooty() + (parent.winfo_height() - self.w.winfo_height()) // 3
+            self.w.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.w.grab_set()
+        except tk.TclError:
+            pass
+    
+    def _start_stroke(self, e):
+        self.current_stroke = [(e.x, e.y)]
+    
+    def _draw(self, e):
+        if self.current_stroke:
+            x0, y0 = self.current_stroke[-1]
+            self.canvas.create_line(x0, y0, e.x, e.y, fill="black", width=2, 
+                                    capstyle="round", smooth=True)
+            self.current_stroke.append((e.x, e.y))
+    
+    def _end_stroke(self, e):
+        if self.current_stroke:
+            self.strokes.append(self.current_stroke)
+            self.current_stroke = []
+            self._update_ok_state()
+    
+    def _update_ok_state(self):
+        has_content = len(self.strokes) > 0 and any(len(s) > 1 for s in self.strokes)
+        self.ok_btn.config(state="normal" if has_content else "disabled")
+    
+    def _clear(self):
+        self.canvas.delete("all")
+        self.strokes = []
+        self.current_stroke = []
+        self._update_ok_state()
+    
+    def _cancel(self):
+        self.result = None
+        self.w.destroy()
+    
+    def _confirm(self):
+        if not self.strokes:
+            return
+        self.result = self._canvas_to_png()
+        self.w.destroy()
+    
+    def _canvas_to_png(self) -> bytes:
+        from PIL import Image, ImageDraw
+        img = Image.new("RGBA", (400, 200), (255, 255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        for stroke in self.strokes:
+            if len(stroke) > 1:
+                draw.line(stroke, fill="black", width=2)
+        import io
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    
+    def wait(self):
+        self.w.wait_window()
+        return self.result
+
+
 class App(tk.Tk):
     def __init__(self, ledger: Ledger, serve=True):
         super().__init__()
@@ -202,8 +305,8 @@ class App(tk.Tk):
         self.nb = ttk.Notebook(card.body); self.nb.pack(fill="both", expand=True)
         # 거래 탭
         t1 = tk.Frame(self.nb, bg=CARD); self.nb.add(t1, text="거래 내역")
-        w, self.dayt = self._tree(t1, ("time", "name", "kind", "amount", "rc", "memo"),
-                                  ("시간", "손님", "구분", "금액", "🧾", "메모"), (70, 120, 120, 110, 40, 200),
+        w, self.dayt = self._tree(t1, ("time", "name", "kind", "amount", "sig", "rc", "memo"),
+                                  ("시간", "손님", "구분", "금액", "✍", "🧾", "메모"), (70, 120, 120, 100, 30, 30, 180),
                                   {"amount": "e", "memo": "w", "name": "w"})
         w.pack(fill="both", expand=True, pady=(8, 0))
         bar = tk.Frame(t1, bg=CARD); bar.pack(fill="x", pady=(8, 0))
@@ -325,8 +428,9 @@ class App(tk.Tk):
             tags = ["odd"] if i % 2 else []
             tags.append("muted" if t["cancelled"] or t["type"] == "cancel" else ("plus" if t["amount"] > 0 else "minus"))
             kind = TYPE_KO[t["type"]] + (" (취소됨)" if t["cancelled"] else "")
+            has_sig = "✍" if t.get("signature") or self.L.signature_for_tx(t["id"]) else ""
             self.dayt.insert("", "end", iid=t["id"], tags=tags, values=(t["ts"][11:16], t["name"], kind,
-                             f"{t['amount']:+,}", "🧾" if rc_tx.get(t["id"]) else "", t["memo"]))
+                             f"{t['amount']:+,}", has_sig, "🧾" if rc_tx.get(t["id"]) else "", t["memo"]))
         self.nb.tab(1, text=f"영수증 ({len(rcs)})")
         self.rct.delete(*self.rct.get_children())
         for i, r in enumerate(sorted(rcs, key=lambda r: r["ts"], reverse=True)):
@@ -525,9 +629,145 @@ class App(tk.Tk):
         n = self.ask_amount("충전", f"{c['name']} 님 충전 금액:", 200000)
         if n is None: return
         memo = ask_string("메모", "메모 (예: 계좌이체, 현금) - 비워도 됩니다", parent=self) or ""
-        t = self.L.deposit(c["id"], n, memo); self.today(); self.note(f"{c['name']} 님 {won(n)} 충전")
+        choice = self._ask_signature_method(c["name"], n)
+        if choice is None:
+            return
+        if choice == "pc":
+            sig_dialog = SignatureDialog(self, c["name"], n)
+            sig_data = sig_dialog.wait()
+            if sig_data is None:
+                return
+            try:
+                sig = self.L.save_signature(sig_data, c["id"], n)
+                t = self.L.deposit(c["id"], n, memo, signature_file=sig["file"])
+                sig["tx_id"] = t["id"]
+                from .storage import write_json_atomic
+                write_json_atomic(self.L._signatures_index(), self.L._load_signatures())
+            except LedgerError as e:
+                messagebox.showerror("충전 실패", str(e))
+                return
+            self.today()
+            self.note(f"{c['name']} 님 {won(n)} 충전 완료")
+        elif choice == "ipad":
+            try:
+                req = self.L.create_signature_request(c["id"], n)
+            except LedgerError as e:
+                messagebox.showerror("오류", str(e))
+                return
+            self._show_signature_wait(c, n, memo, req)
+            return
         if messagebox.askyesno("영수증", "이 충전에 영수증(이체 내역 등) 사진을 첨부할까요?"):
-            self._save_receipt(date=t["date"], amount=n, memo="충전", cid=c["id"], tx_id=t["id"])
+            t_id = next((tx["id"] for tx in reversed(self.L.tx) if tx["cid"] == c["id"] and tx["type"] == "deposit"), None)
+            if t_id:
+                tx = next(tx for tx in self.L.tx if tx["id"] == t_id)
+                self._save_receipt(date=tx["date"], amount=n, memo="충전", cid=c["id"], tx_id=t_id)
+    
+    def _ask_signature_method(self, name, amount):
+        """서명 방법 선택 다이얼로그. pc/ipad/None(취소) 반환."""
+        w = tk.Toplevel(self, bg=CARD)
+        w.title("서명 받기")
+        w.resizable(False, False)
+        w.transient(self)
+        result = {"v": None}
+        
+        f = tk.Frame(w, bg=CARD)
+        f.pack(padx=24, pady=20)
+        
+        tk.Label(f, text=f"{name} 님 충전 {amount:,}원", bg=CARD, fg=TEXT,
+                 font=("TkDefaultFont", 14, "bold")).pack(pady=(0, 12))
+        tk.Label(f, text="충전을 완료하려면 손님 서명이 필요합니다.\n서명 방법을 선택하세요:", 
+                 bg=CARD, fg=SUB, justify="center").pack(pady=(0, 16))
+        
+        def pick(v):
+            result["v"] = v
+            w.destroy()
+        
+        ttk.Button(f, text="🖱 이 PC에서 서명 (마우스/터치)", style="Accent.TButton",
+                   command=lambda: pick("pc")).pack(fill="x", pady=4)
+        ttk.Button(f, text="📱 아이패드로 서명 받기", 
+                   command=lambda: pick("ipad")).pack(fill="x", pady=4)
+        ttk.Button(f, text="취소", command=w.destroy).pack(fill="x", pady=(12, 0))
+        
+        w.bind("<Escape>", lambda e: w.destroy())
+        w.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - w.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - w.winfo_height()) // 3
+        w.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            w.grab_set()
+        except tk.TclError:
+            pass
+        w.wait_window()
+        return result["v"]
+    
+    def _show_signature_wait(self, customer, amount, memo, req):
+        """아이패드 서명 대기 화면."""
+        from .web import signature_url
+        w = tk.Toplevel(self, bg=CARD)
+        w.title("서명 대기 중")
+        w.resizable(False, False)
+        w.transient(self)
+        
+        f = tk.Frame(w, bg=CARD)
+        f.pack(padx=24, pady=20)
+        
+        tk.Label(f, text=f"{customer['name']} 님 충전 {amount:,}원", bg=CARD, fg=TEXT,
+                 font=("TkDefaultFont", 14, "bold")).pack()
+        tk.Label(f, text="아이패드/휴대폰에서 서명을 기다리는 중...", 
+                 bg=CARD, fg=SUB).pack(pady=(8, 16))
+        
+        url = signature_url(self.L, req["token"])
+        qr = qrcode.QRCode(border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        mat = qr.get_matrix()
+        cell = max(4, 280 // len(mat))
+        cv = tk.Canvas(f, width=len(mat)*cell, height=len(mat)*cell, bg="white", highlightthickness=0)
+        cv.pack(pady=8)
+        for r_idx, row in enumerate(mat):
+            for c_idx, on in enumerate(row):
+                if on:
+                    cv.create_rectangle(c_idx*cell, r_idx*cell, (c_idx+1)*cell, (r_idx+1)*cell, 
+                                        fill="black", outline="")
+        
+        tk.Label(f, text="이미 사장님 페이지에 로그인된 기기에서\n서명 요청이 표시됩니다.", 
+                 bg=CARD, fg=SUB, font=self.f_small, justify="center").pack(pady=8)
+        
+        status_lbl = tk.Label(f, text="⏳ 서명 대기 중 (5분 후 만료)", bg=CARD, fg=ACCENT)
+        status_lbl.pack(pady=8)
+        
+        completed = {"done": False, "tx": None}
+        
+        def check():
+            if completed["done"] or not w.winfo_exists():
+                return
+            updated_req = self.L.get_signature_request(req["token"])
+            if updated_req is None:
+                if not any(r["token"] == req["token"] and r.get("completed") 
+                          for r in self.L._pending_signature_requests(self.L).values()):
+                    status_lbl.config(text="❌ 서명 요청이 만료되었습니다", fg=MINUS)
+                    return
+            reqs = self.L._pending_signature_requests(self.L)
+            done_req = reqs.get(req["token"])
+            if done_req and done_req.get("completed"):
+                completed["done"] = True
+                completed["tx"] = done_req.get("tx_id")
+                status_lbl.config(text="✅ 서명 완료!", fg=PLUS)
+                w.after(1000, w.destroy)
+                return
+            w.after(1000, check)
+        
+        def cancel():
+            w.destroy()
+        
+        ttk.Button(f, text="취소", command=cancel).pack(pady=(8, 0))
+        
+        check()
+        w.wait_window()
+        
+        if completed["done"]:
+            self.today()
+            self.note(f"{customer['name']} 님 {won(amount)} 충전 완료 (서명)")
 
     def new_customer(self):
         name = ask_string("새 손님", "이름:", parent=self)

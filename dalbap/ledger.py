@@ -100,12 +100,16 @@ class Ledger:
             raise
         return t
 
-    def deposit(self, cid, amount, memo="", when=None):
+    def deposit(self, cid, amount, memo="", when=None, signature_file=None):
         amount = int(amount)
         if amount <= 0:
             raise LedgerError("충전 금액은 0보다 커야 합니다")
         with self.lock:
-            return self._add(cid, DEPOSIT, amount, memo, when=when)
+            t = self._add(cid, DEPOSIT, amount, memo, when=when)
+            if signature_file:
+                t["signature"] = signature_file
+                self._save_month(t["date"][:7])
+            return t
 
     def deduct(self, cid, amount=None, memo="식사", allow_negative=False, when=None):
         amount = int(amount if amount is not None else self.settings.get("meal_price", 9000))
@@ -371,3 +375,144 @@ for _f in (add_receipt, receipts_for, update_receipt, delete_receipt, restore_re
            regenerate_owner_token, web_secret):
     setattr(Ledger, _f.__name__, _f)
 Ledger.has_owner_pin = lambda self: bool(self.settings.get("owner_pin_hash"))
+
+
+# ---------------- 서명 (충전 시 필수) ----------------
+MAX_SIGNATURE_BYTES = 2 * 1024 * 1024
+SIGNATURE_REQUEST_TIMEOUT = 300  # 5분
+
+
+def _signatures_index(self):
+    return self.dir / "signatures" / "signatures.json"
+
+
+def _load_signatures(self):
+    if not hasattr(self, "_signatures"):
+        self._signatures = read_json(_signatures_index(self), [])
+    return self._signatures
+
+
+def save_signature(self, data: bytes, cid: str, amount: int, tx_id: str = None) -> dict:
+    """서명 PNG 저장. signatures/YYYY/MM/ 에 저장하고 메타데이터 기록."""
+    from PIL import Image, UnidentifiedImageError
+    if not data:
+        raise LedgerError("서명이 비어 있습니다")
+    if len(data) > MAX_SIGNATURE_BYTES:
+        raise LedgerError("서명 파일이 너무 큽니다")
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if im.format != "PNG":
+                raise LedgerError("서명은 PNG 형식이어야 합니다")
+            im.verify()
+    except (UnidentifiedImageError, OSError, SyntaxError):
+        raise LedgerError("올바른 이미지가 아닙니다")
+    if cid and cid not in self.customers:
+        raise LedgerError("없는 손님입니다")
+    now = datetime.datetime.now()
+    date = now.date().isoformat()
+    sid = uuid.uuid4().hex[:12]
+    rel = f"signatures/{date[:4]}/{date[5:7]}/{date}_{sid}.png"
+    path = self.dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".part")
+    with open(tmp, "wb") as f:
+        f.write(data); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, path)
+    sig = {"id": sid, "date": date, "file": rel, "cid": cid, "amount": amount,
+           "tx_id": tx_id, "ts": now.isoformat(timespec="seconds")}
+    with self.lock:
+        sigs = _load_signatures(self)
+        sigs.append(sig)
+        try:
+            write_json_atomic(_signatures_index(self), sigs)
+        except Exception:
+            sigs.remove(sig); path.unlink(missing_ok=True); raise
+    return sig
+
+
+def signature_for_tx(self, tx_id: str) -> dict | None:
+    """트랜잭션에 연결된 서명 반환."""
+    with self.lock:
+        for s in _load_signatures(self):
+            if s.get("tx_id") == tx_id:
+                return s
+    return None
+
+
+def signature_path(self, sig: dict) -> Path:
+    return self.dir / sig["file"]
+
+
+def _pending_signature_requests(self):
+    if not hasattr(self, "_sig_requests"):
+        self._sig_requests = {}
+    return self._sig_requests
+
+
+def create_signature_request(self, cid: str, amount: int) -> dict:
+    """웹 서명 요청 생성. 5분 후 만료, 일회용 토큰."""
+    if cid not in self.customers:
+        raise LedgerError("없는 손님입니다")
+    token = secrets.token_urlsafe(24)
+    req = {
+        "token": token,
+        "cid": cid,
+        "name": self.customers[cid]["name"],
+        "amount": amount,
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "expires": (datetime.datetime.now() + datetime.timedelta(seconds=SIGNATURE_REQUEST_TIMEOUT)).isoformat(timespec="seconds"),
+        "completed": False,
+    }
+    with self.lock:
+        reqs = _pending_signature_requests(self)
+        self._cleanup_expired_requests()
+        reqs[token] = req
+    return req
+
+
+def _cleanup_expired_requests(self):
+    now = datetime.datetime.now()
+    reqs = _pending_signature_requests(self)
+    expired = [k for k, v in reqs.items() 
+               if datetime.datetime.fromisoformat(v["expires"]) < now or v["completed"]]
+    for k in expired:
+        del reqs[k]
+
+
+def get_signature_request(self, token: str) -> dict | None:
+    """토큰으로 서명 요청 조회. 만료/완료된 요청은 None."""
+    with self.lock:
+        self._cleanup_expired_requests()
+        req = _pending_signature_requests(self).get(token)
+        if req and not req["completed"]:
+            return req
+    return None
+
+
+def complete_signature_request(self, token: str, signature_data: bytes) -> dict:
+    """서명 요청 완료: 서명 저장 + 충전 기록."""
+    with self.lock:
+        req = self.get_signature_request(token)
+        if not req:
+            raise LedgerError("서명 요청이 만료되었거나 존재하지 않습니다")
+        sig = self.save_signature(signature_data, req["cid"], req["amount"])
+        tx = self.deposit(req["cid"], req["amount"], memo="충전 (서명)", signature_file=sig["file"])
+        sig["tx_id"] = tx["id"]
+        write_json_atomic(_signatures_index(self), _load_signatures(self))
+        req["completed"] = True
+        req["tx_id"] = tx["id"]
+        return {"tx": tx, "signature": sig}
+
+
+def get_pending_requests_for_owner(self) -> list:
+    """사장님 페이지용: 현재 대기 중인 서명 요청 목록."""
+    with self.lock:
+        self._cleanup_expired_requests()
+        return [dict(r) for r in _pending_signature_requests(self).values() if not r["completed"]]
+
+
+for _sf in (save_signature, signature_for_tx, signature_path, create_signature_request,
+            get_signature_request, complete_signature_request, get_pending_requests_for_owner):
+    setattr(Ledger, _sf.__name__, _sf)
+Ledger._cleanup_expired_requests = _cleanup_expired_requests
+Ledger._pending_signature_requests = _pending_signature_requests

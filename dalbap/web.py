@@ -39,6 +39,13 @@ input,select{width:100%;box-sizing:border-box;font-size:18px;padding:10px;border
 <input name="pin" type="password" inputmode="numeric" autocomplete="off" autofocus>
 <button class="btn">확인</button></form>
 {% else %}
+{% for req in sig_requests %}
+<div style="background:#fff8e1;border:2px solid #ffb300;margin:14px;padding:16px;border-radius:12px">
+<h2 style="margin:0 0 8px;font-size:18px;color:#e65100">✍ 서명 요청</h2>
+<div style="font-size:18px;font-weight:700">{{req.name}} 님 · {{"{:,}".format(req.amount)}}원 충전</div>
+<a href="{{url_for('signature_pad', sig_token=req.token)}}" class="btn" style="background:#e65100;text-align:center;text-decoration:none;display:block">서명하기</a>
+</div>
+{% endfor %}
 <form class="card" method="post" enctype="multipart/form-data" action="{{url_for('owner_upload', token=token)}}">
 <h1>영수증 등록</h1>
 <label class="btn cam" for="f">📷 영수증 촬영</label>
@@ -61,6 +68,138 @@ input,select{width:100%;box-sizing:border-box;font-size:18px;padding:10px;border
 {% else %}<p class="s">등록된 영수증이 없습니다</p>{% endfor %}</div>
 <p class="s" style="text-align:center"><a href="{{url_for('owner_logout', token=token)}}">로그아웃</a></p>
 {% endif %}</body></html>"""
+
+
+SIGNATURE_PAD_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="robots" content="noindex">
+<title>서명</title><style>
+*{box-sizing:border-box;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#f3f4f6;font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif}
+.container{display:flex;flex-direction:column;height:100%;padding:16px}
+.info{text-align:center;padding:16px;background:#fff;border-radius:12px;margin-bottom:12px}
+.info h1{margin:0;font-size:24px;color:#1f2328}
+.info .amount{font-size:32px;font-weight:800;color:#1f5fae}
+.canvas-wrap{flex:1;background:#fff;border:2px solid #d9dce1;border-radius:12px;position:relative;min-height:200px}
+canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none}
+.hint{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#999;font-size:18px;pointer-events:none}
+.buttons{display:flex;gap:12px;margin-top:12px}
+.buttons button{flex:1;padding:18px;font-size:20px;font-weight:700;border:none;border-radius:10px;cursor:pointer}
+.btn-cancel{background:#e5e7eb;color:#374151}.btn-clear{background:#fef3c7;color:#92400e}
+.btn-confirm{background:#1f5fae;color:#fff}
+.btn-confirm:disabled{background:#9ca3af}
+.msg{text-align:center;padding:40px 20px;font-size:18px}
+.msg.ok{color:#1e7e34}.msg.err{color:#b42318}
+</style></head><body>
+{% if expired %}
+<div class="msg err">서명 요청이 만료되었습니다.<br>PC에서 다시 충전을 시작해 주세요.</div>
+{% elif done %}
+<div class="msg ok">✅ 서명 완료!<br>충전이 완료되었습니다.</div>
+{% else %}
+<div class="container">
+<div class="info">
+<h1>{{name}} 님</h1>
+<div class="amount">{{"{:,}".format(amount)}}원 충전</div>
+</div>
+<div class="canvas-wrap">
+<canvas id="pad"></canvas>
+<div class="hint" id="hint">여기에 서명해 주세요</div>
+</div>
+<div class="buttons">
+<button class="btn-cancel" onclick="cancel()">취소</button>
+<button class="btn-clear" onclick="clear_pad()">다시 쓰기</button>
+<button class="btn-confirm" id="confirmBtn" disabled onclick="submit_sig()">확인</button>
+</div>
+</div>
+<script>
+const canvas = document.getElementById('pad');
+const ctx = canvas.getContext('2d');
+const hint = document.getElementById('hint');
+const confirmBtn = document.getElementById('confirmBtn');
+let drawing = false, hasContent = false, strokes = [];
+
+function resize() {
+  const r = canvas.parentElement.getBoundingClientRect();
+  canvas.width = r.width; canvas.height = r.height;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = '#000';
+  redraw();
+}
+window.addEventListener('resize', resize);
+resize();
+
+function getPos(e) {
+  const r = canvas.getBoundingClientRect();
+  const t = e.touches ? e.touches[0] : e;
+  return [(t.clientX - r.left) * (canvas.width / r.width), (t.clientY - r.top) * (canvas.height / r.height)];
+}
+
+function start(e) {
+  e.preventDefault(); drawing = true;
+  const [x, y] = getPos(e);
+  strokes.push([[x, y]]);
+  ctx.beginPath(); ctx.moveTo(x, y);
+}
+function move(e) {
+  if (!drawing) return;
+  e.preventDefault();
+  const [x, y] = getPos(e);
+  strokes[strokes.length - 1].push([x, y]);
+  ctx.lineTo(x, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, y);
+  if (!hasContent) { hasContent = true; hint.style.display = 'none'; confirmBtn.disabled = false; }
+}
+function end(e) { drawing = false; ctx.beginPath(); }
+
+canvas.addEventListener('pointerdown', start);
+canvas.addEventListener('pointermove', move);
+canvas.addEventListener('pointerup', end);
+canvas.addEventListener('pointercancel', end);
+canvas.addEventListener('pointerleave', end);
+
+function redraw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = '#000';
+  for (const s of strokes) {
+    if (s.length < 2) continue;
+    ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]);
+    for (let i = 1; i < s.length; i++) ctx.lineTo(s[i][0], s[i][1]);
+    ctx.stroke();
+  }
+}
+
+function clear_pad() {
+  strokes = []; hasContent = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  hint.style.display = 'block'; confirmBtn.disabled = true;
+}
+
+function cancel() {
+  if (confirm('서명을 취소하시겠습니까?')) window.location.href = '/';
+}
+
+async function submit_sig() {
+  if (!hasContent) return;
+  confirmBtn.disabled = true; confirmBtn.textContent = '전송 중...';
+  const dataUrl = canvas.toDataURL('image/png');
+  const blob = await (await fetch(dataUrl)).blob();
+  const form = new FormData();
+  form.append('signature', blob, 'signature.png');
+  try {
+    const res = await fetch('{{url_for("signature_submit", sig_token=token)}}', {method: 'POST', body: form});
+    if (res.ok) {
+      document.body.innerHTML = '<div class="msg ok">✅ 서명 완료!<br>충전이 완료되었습니다.</div>';
+    } else {
+      const txt = await res.text();
+      alert('오류: ' + txt);
+      confirmBtn.disabled = false; confirmBtn.textContent = '확인';
+    }
+  } catch(e) {
+    alert('전송 실패: ' + e);
+    confirmBtn.disabled = false; confirmBtn.textContent = '확인';
+  }
+}
+</script>
+{% endif %}
+</body></html>"""
 
 
 def create_app(ledger):
@@ -89,10 +228,12 @@ def create_app(ledger):
     def render_owner(token, msg=None, ok=True, code=200):
         authed = session.get("owner") == token
         today = datetime.date.today().isoformat()
+        sig_requests = ledger.get_pending_requests_for_owner() if authed else []
         return render_template_string(OWNER_PAGE, token=token, authed=authed, msg=msg, ok=ok, today=today,
                                       customers=ledger.search("") if authed else [],
                                       count=len(ledger.receipts_for(date=today)) if authed else 0,
-                                      recent=recent(10) if authed else []), code
+                                      recent=recent(10) if authed else [],
+                                      sig_requests=sig_requests), code
 
     def recent(n):
         rs = sorted(ledger.receipts_for(), key=lambda r: r["ts"], reverse=True)[:n]
@@ -170,6 +311,30 @@ def create_app(ledger):
         return render_template_string(PAGE, c=c, bal=bal, rows=ledger.history(c["id"])[:200],
                                       kind=TYPE_KO, price=price, meals=max(bal, 0) // price)
 
+    @app.route("/sig/<sig_token>")
+    def signature_pad(sig_token):
+        req = ledger.get_signature_request(sig_token)
+        if not req:
+            return render_template_string(SIGNATURE_PAD_PAGE, expired=True, done=False, 
+                                         name="", amount=0, token=sig_token)
+        return render_template_string(SIGNATURE_PAD_PAGE, expired=False, done=False,
+                                     name=req["name"], amount=req["amount"], token=sig_token)
+
+    @app.route("/sig/<sig_token>/submit", methods=["POST"])
+    def signature_submit(sig_token):
+        req = ledger.get_signature_request(sig_token)
+        if not req:
+            return "서명 요청이 만료되었습니다", 400
+        sig_file = request.files.get("signature")
+        if not sig_file:
+            return "서명이 없습니다", 400
+        try:
+            sig_data = sig_file.read(2 * 1024 * 1024 + 1)
+            result = ledger.complete_signature_request(sig_token, sig_data)
+            return "OK", 200
+        except LedgerError as e:
+            return str(e), 400
+
     return app
 
 
@@ -199,3 +364,7 @@ def owner_url(ledger):
 
 def customer_url(ledger, c):
     return f"http://{lan_ip()}:{ledger.settings.get('port', 8765)}/c/{c['token']}"
+
+
+def signature_url(ledger, sig_token):
+    return f"http://{lan_ip()}:{ledger.settings.get('port', 8765)}/sig/{sig_token}"
