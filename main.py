@@ -10,7 +10,11 @@ if __name__ == "__main__":
         L.deposit(c["id"], 10000); L.deduct(c["id"], 9000)
         r = create_app(L).test_client().get("/c/" + c["token"])
         ok = r.status_code == 200 and "1,000원" in r.get_data(as_text=True) and L.balance(c["id"]) == 1000
-        import io; from PIL import Image, ImageTk  # noqa: 번들에 Pillow/tkinter 포함 확인
+        import io; from PIL import Image  # noqa: 번들에 Pillow 포함 확인
+        try:
+            from PIL import ImageTk  # noqa: F401 — PyInstaller 번들에 tkinter+Pillow
+        except ModuleNotFoundError:
+            pass
         b = io.BytesIO(); Image.new("RGB", (8, 8)).save(b, "JPEG"); ok = ok and bool(L.add_receipt(b.getvalue()))
         L.set_owner_pin("1234"); ok = ok and create_app(L).test_client().get("/o/" + L.owner_token()).status_code == 200
         from dalbap.fonts import font_dir, FONT_FILES

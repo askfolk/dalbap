@@ -359,36 +359,34 @@ class App(tk.Tk):
         self.option_add("*TCombobox*Font", "TkTextFont"); self.option_add("*TCombobox*Listbox.font", "TkTextFont")
 
     def _tree(self, parent, cols, heads, widths, anchors=None, height=None, min_table_width=None):
-        min_table_width = min_table_width or sum(widths) + 32
+        """열 최소 너비 유지 + 가로/세로 스크롤 (창이 좁아져도 글꼴 축소 없음)."""
+        min_table_width = min_table_width or sum(widths) + 24
         wrap = tk.Frame(parent, bg=CARD)
         wrap.grid_rowconfigure(0, weight=1)
         wrap.grid_columnconfigure(0, weight=1)
-        canvas = tk.Canvas(wrap, bg=CARD, highlightthickness=0, borderwidth=0)
-        vsb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
-        hsb = ttk.Scrollbar(wrap, orient="horizontal", command=canvas.xview)
-        inner = tk.Frame(canvas, bg=CARD, width=min_table_width)
-        inner.grid_propagate(True)
-        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
-        tv = ttk.Treeview(inner, columns=cols, show="headings", height=height or 10)
+        table = tk.Frame(wrap, bg=CARD)
+        table.grid(row=0, column=0, sticky="nsew")
+        table.grid_rowconfigure(0, weight=1)
+        table.grid_columnconfigure(0, weight=1)
+        tv = ttk.Treeview(table, columns=cols, show="headings", height=height or 10)
         for c, h, w in zip(cols, heads, widths):
             a = (anchors or {}).get(c, "center")
             tv.heading(c, text=h, anchor=a)
             tv.column(c, width=w, minwidth=w, anchor=a, stretch=False)
-
-        def _on_inner_configure(_event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        def _on_canvas_configure(event):
-            canvas.itemconfig(win_id, height=event.height)
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        inner.bind("<Configure>", _on_inner_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
-        tv.pack(fill="both", expand=True)
-        canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        canvas.grid(row=0, column=0, sticky="nsew")
+        vsb = ttk.Scrollbar(table, orient="vertical", command=tv.yview)
+        hsb = ttk.Scrollbar(wrap, orient="horizontal", command=tv.xview)
+        tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tv.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
+
+        def _sync_xscroll(_event=None):
+            tv.update_idletasks()
+            need = max(min_table_width, sum(widths) + 8)
+            if tv.winfo_width() < need:
+                tv.xview_moveto(hsb.get()[0] if hsb.get() else 0)
+
+        tv.bind("<Configure>", _sync_xscroll)
         tv.tag_configure("odd", background=ZEBRA)
         tv.tag_configure("plus", foreground=PLUS)
         tv.tag_configure("minus", foreground=MINUS)
@@ -479,9 +477,10 @@ class App(tk.Tk):
         # 영수증 탭
         t2 = tk.Frame(self.nb._content, bg=CARD)
         self.nb.add(t2, text="영수증")
-        t2.columnconfigure(0, weight=1, minsize=MIN_CENTER_WIDTH - MIN_PREVIEW_WIDTH - 24)
-        t2.rowconfigure(0, weight=1)
         rc_widths = (70, 100, 100, 160)
+        t2.columnconfigure(0, weight=1, minsize=sum(rc_widths) + 48)
+        t2.columnconfigure(1, minsize=MIN_PREVIEW_WIDTH, weight=0)
+        t2.rowconfigure(0, weight=1)
         w, self.rct = self._tree(
             t2, ("time", "amount", "name", "memo"), ("등록", "금액", "손님", "메모"), rc_widths,
             {"amount": "e", "memo": "w"},
