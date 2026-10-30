@@ -1,0 +1,34 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q tests/test_ledger.py tests/test_web.py
+      - name: Build Windows exe
+        if: runner.os == 'Windows'
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name Dalbap --add-data "dalbap/fonts:dalbap/fonts" main.py
+          .\dist\Dalbap.exe --selftest
+          Compress-Archive -Path dist\Dalbap.exe -DestinationPath Dalbap-windows.zip
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        run: |
+          pyinstaller --noconfirm --windowed --name Dalbap --add-data "dalbap/fonts:dalbap/fonts" --osx-bundle-identifier kr.dalbap.app main.py
+          ./dist/Dalbap.app/Contents/MacOS/Dalbap --selftest
+          ditto -c -k --keepParent dist/Dalbap.app Dalbap-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dalbap-${{ runner.os }}
+          path: Dalbap-*.zip
