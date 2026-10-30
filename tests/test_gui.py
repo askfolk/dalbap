@@ -11,7 +11,7 @@ def test_gui_builds_with_receipts(tmp_path):
     r = L.add_receipt(b.getvalue(), tx_id=t["id"], cid=c["id"], amount=9000)
     app = App(L, serve=False); app.update()
     assert app.ct.exists(c["id"]) and len(app.dayt.get_children()) == 2
-    assert app.dayt.item(t["id"])["values"][4] == "🧾"
+    assert app.dayt.item(t["id"])["values"][5] == "🧾"
     assert "(1)" in app.nb.tab(1, "text")
     app.rct.selection_set(r["id"]); app.update(); app.preview()
     assert app._thumb is not None

@@ -243,16 +243,18 @@ def test_customer_cannot_access_signatures(web):
 
 # ---------------- 추가 테스트: 백업, 거래 기록 ----------------
 def test_signatures_in_daily_backup(tmp_path):
+    import datetime, shutil
     from dalbap.storage import daily_backup
-    import shutil
     L = Ledger(tmp_path)
     c = L.add_customer("백업테스트")
     req = L.create_signature_request(c["id"], 100000)
     L.complete_signature_request(req["token"], sig_png())
-    backup_dir = tmp_path / "backups" / "2026-10-30"
+    today = datetime.date.today().isoformat()
+    backup_dir = tmp_path / "backups" / today
     if backup_dir.exists():
         shutil.rmtree(backup_dir)
     backup_dir = daily_backup(tmp_path)
+    assert backup_dir.name == today
     assert (backup_dir / "signatures" / "signatures.json").exists()
 
 

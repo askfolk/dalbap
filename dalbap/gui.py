@@ -100,7 +100,11 @@ class SlideNotebook(tk.Frame):
             self.after_idle(lambda: self._move_accent(0))
         self._pages.append(child)
 
-    def tab(self, idx, **kw):
+    def tab(self, idx, option=None, **kw):
+        if option is not None:
+            if option == "text":
+                return self._tab_labels[idx].cget("text")
+            return self._tab_labels[idx].cget(option)
         if "text" in kw:
             self._tab_labels[idx].config(text=kw["text"])
             if idx == self._cur:
@@ -205,11 +209,21 @@ def ask_string(title, prompt, initialvalue="", show=None, parent=None):
         y = parent.winfo_rooty() + (parent.winfo_height() - w.winfo_height()) // 3
         w.geometry(f"+{max(x, 0)}+{max(y, 0)}")
     e.focus_set(); e.select_range(0, "end"); e.icursor("end")
-    try:
-        w.grab_set()
-    except tk.TclError:
-        pass
-    w.wait_window()
+    use_grab = parent is None or int(parent.winfo_viewable() or 0)
+    if use_grab:
+        try:
+            w.grab_set()
+        except tk.TclError:
+            pass
+    if parent is not None:
+        top = parent.winfo_toplevel()
+        while w.winfo_exists():
+            try:
+                top.update()
+            except tk.TclError:
+                break
+    else:
+        w.wait_window()
     return res["v"]
 
 
