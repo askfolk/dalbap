@@ -19,13 +19,13 @@ jobs:
       - name: Build Windows exe
         if: runner.os == 'Windows'
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name Dalbap --add-data "dalbap/fonts:dalbap/fonts" main.py
+          pyinstaller --noconfirm --onefile --windowed --name Dalbap --add-data "dalbap/fonts:dalbap/fonts" --add-data "dalbap/icon.png:dalbap" --add-data "dalbap/icon64.png:dalbap" main.py
           .\dist\Dalbap.exe --selftest
           Compress-Archive -Path dist\Dalbap.exe -DestinationPath Dalbap-windows.zip
       - name: Build macOS app
         if: runner.os == 'macOS'
         run: |
-          pyinstaller --noconfirm --windowed --name Dalbap --add-data "dalbap/fonts:dalbap/fonts" --osx-bundle-identifier kr.dalbap.app main.py
+          pyinstaller --noconfirm --windowed --name Dalbap --add-data "dalbap/fonts:dalbap/fonts" --add-data "dalbap/icon.png:dalbap" --add-data "dalbap/icon64.png:dalbap" --osx-bundle-identifier kr.dalbap.app main.py
           ./dist/Dalbap.app/Contents/MacOS/Dalbap --selftest
           ditto -c -k --keepParent dist/Dalbap.app Dalbap-macos.zip
       - uses: actions/upload-artifact@v4

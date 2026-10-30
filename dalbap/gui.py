@@ -1,5 +1,6 @@
 """사장님용 데스크톱 화면 (tkinter, 업무용 소프트웨어 스타일)."""
 import calendar, datetime, os, subprocess, sys
+from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, messagebox, filedialog
@@ -181,9 +182,10 @@ class App(tk.Tk):
     def __init__(self, ledger: Ledger, serve=True):
         super().__init__()
         self.L = ledger
-        self.title("달밥 장부")
+        self.title("마당 달밥 장부")
         self.geometry("1360x820"); self.minsize(1180, 700)
         self.configure(bg=BG)
+        self._load_icon()
         self._fonts(); self._style()
         self.sel = datetime.date.today()
         self.server_error = None
@@ -195,6 +197,25 @@ class App(tk.Tk):
                 self.server_error = str(e)
         self._build()
         self.refresh()
+
+    def _load_icon(self):
+        """앱 아이콘 로드 (번들된 PNG)."""
+        self._app_icon = None
+        self._app_icon_small = None
+        try:
+            from PIL import Image, ImageTk
+            base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+            icon_path = base / "dalbap" / "icon64.png"
+            icon_small_path = base / "dalbap" / "icon.png"
+            if icon_path.exists():
+                img = Image.open(icon_path)
+                self._app_icon = ImageTk.PhotoImage(img)
+                self.iconphoto(True, self._app_icon)
+            if icon_small_path.exists():
+                img_small = Image.open(icon_small_path)
+                self._app_icon_small = ImageTk.PhotoImage(img_small)
+        except Exception:
+            pass
 
     # ---------------- 스타일 ----------------
     def _fonts(self):
@@ -250,8 +271,11 @@ class App(tk.Tk):
     def _build(self):
         # 상단 제목 줄
         top = tk.Frame(self, bg=CARD, highlightbackground=LINE, highlightthickness=1); top.pack(fill="x")
-        tk.Label(top, text="달밥 장부", bg=CARD, fg=ACCENT, font=self.f_big).pack(side="left", padx=18, pady=8)
-        tk.Label(top, text="월정액 선불 식사 관리", bg=CARD, fg=SUB).pack(side="left", pady=(6, 0))
+        if self._app_icon_small:
+            tk.Label(top, image=self._app_icon_small, bg=CARD).pack(side="left", padx=(18, 8), pady=8)
+        tk.Label(top, text="마당", bg=CARD, fg=SUB, font=self.f_bold).pack(side="left", pady=8)
+        tk.Label(top, text="달밥 장부", bg=CARD, fg=ACCENT, font=self.f_big).pack(side="left", padx=(8, 0), pady=8)
+        tk.Label(top, text="월정액 선불 식사 관리", bg=CARD, fg=SUB).pack(side="left", padx=(12, 0), pady=(6, 0))
         self.clock = tk.Label(top, bg=CARD, fg=SUB); self.clock.pack(side="right", padx=18)
 
         # 상태 표시줄
