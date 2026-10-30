@@ -63,7 +63,10 @@ class Card(tk.Frame):
 
 
 class SlideNotebook(tk.Frame):
-    """탭 전환 시 좌·우 슬라이드 애니메이션."""
+    """탭 전환: 슬라이드 + 강조선 이동 (<=200ms). <<NotebookTabChanged>> 호환."""
+    _ANIM_MS = 160
+    _ANIM_STEPS = 8
+
     def __init__(self, master, active_font=None, inactive_font=None, **kw):
         super().__init__(master, bg=CARD, **kw)
         self._active_font = active_font
@@ -72,6 +75,7 @@ class SlideNotebook(tk.Frame):
         self._tab_bar.pack(fill="x")
         self._tabs_row = tk.Frame(self._tab_bar, bg=CARD)
         self._tabs_row.pack(fill="x")
+        self._accent = tk.Frame(self._tab_bar, bg=ACCENT, height=3)
         self._content = tk.Frame(self, bg=CARD)
         self._content.pack(fill="both", expand=True, pady=(6, 0))
         self._pages = []
@@ -93,11 +97,14 @@ class SlideNotebook(tk.Frame):
             child.place_forget()
         else:
             self._style_tab(0, active=True)
+            self.after_idle(lambda: self._move_accent(0))
         self._pages.append(child)
 
     def tab(self, idx, **kw):
         if "text" in kw:
             self._tab_labels[idx].config(text=kw["text"])
+            if idx == self._cur:
+                self.after_idle(lambda i=idx: self._move_accent(i))
 
     def select(self, idx):
         if idx < 0 or idx >= len(self._pages) or self._animating or idx == self._cur:
@@ -112,24 +119,53 @@ class SlideNotebook(tk.Frame):
             font=self._active_font if active else self._inactive_font,
         )
 
+    def _tab_metrics(self, idx):
+        self._tab_bar.update_idletasks()
+        lbl = self._tab_labels[idx]
+        x = self._tabs_row.winfo_x() + lbl.winfo_x()
+        y = self._tabs_row.winfo_y() + self._tabs_row.winfo_height() - 3
+        return x, y, max(lbl.winfo_width(), 28)
+
+    def _move_accent(self, idx, from_idx=None):
+        x, y, w = self._tab_metrics(idx)
+        if from_idx is None or from_idx == idx:
+            self._accent.place(x=x, y=y, width=w, height=3)
+            return
+        x0, y0, w0 = self._tab_metrics(from_idx)
+        step = {"n": 0}
+
+        def tick():
+            t = step["n"] / self._ANIM_STEPS
+            ease = 1 - (1 - t) ** 2
+            cx = int(x0 + (x - x0) * ease)
+            cw = int(w0 + (w - w0) * ease)
+            self._accent.place(x=cx, y=y, width=cw, height=3)
+            if step["n"] < self._ANIM_STEPS:
+                step["n"] += 1
+                self.after(max(1, self._ANIM_MS // self._ANIM_STEPS), tick)
+            else:
+                self._accent.place(x=x, y=y, width=w, height=3)
+
+        tick()
+
     def _animate(self, old, new):
         self._animating = True
         old_w, new_w = self._pages[old], self._pages[new]
         direction = 1 if new > old else -1
         w = max(self._content.winfo_width(), 320)
         step = {"n": 0}
-        total = 10
 
         def tick():
-            t = step["n"] / total
+            t = step["n"] / self._ANIM_STEPS
             ease = 1 - (1 - t) ** 2
             ox = int(-direction * w * ease)
             nx = int(direction * w * (1 - ease))
+            lift = int(10 * (1 - ease))
             old_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=ox, y=0)
-            new_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=nx, y=0)
-            if step["n"] < total:
+            new_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=nx, y=lift)
+            if step["n"] < self._ANIM_STEPS:
                 step["n"] += 1
-                self.after(18, tick)
+                self.after(max(1, self._ANIM_MS // self._ANIM_STEPS), tick)
             else:
                 old_w.place_forget()
                 new_w.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -137,10 +173,13 @@ class SlideNotebook(tk.Frame):
                 self._animating = False
                 for i in range(len(self._tab_labels)):
                     self._style_tab(i, active=(i == new))
+                self._move_accent(new)
+                self.event_generate("<<NotebookTabChanged>>")
 
         for i in range(len(self._tab_labels)):
             self._style_tab(i, active=(i == new))
-        new_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=direction * w, y=0)
+        new_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=direction * w, y=10)
+        self._move_accent(new, from_idx=old)
         tick()
 
 
