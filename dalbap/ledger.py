@@ -501,6 +501,7 @@ def complete_signature_request(self, token: str, signature_data: bytes) -> dict:
         write_json_atomic(_signatures_index(self), _load_signatures(self))
         req["completed"] = True
         req["tx_id"] = tx["id"]
+        self._cleanup_expired_requests()
         return {"tx": tx, "signature": sig}
 
 

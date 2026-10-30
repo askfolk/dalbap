@@ -107,6 +107,25 @@ def test_cannot_complete_twice(L):
         L.complete_signature_request(req["token"], sig_png())
 
 
+def test_pending_signature_requests_bound_method(L):
+    """GUI 폴링과 동일하게 인자 없이 호출 가능해야 함."""
+    c = L.add_customer("폴링")
+    req = L.create_signature_request(c["id"], 12000)
+    pending = L._pending_signature_requests()
+    assert isinstance(pending, dict)
+    assert req["token"] in pending
+    L.complete_signature_request(req["token"], sig_png())
+    assert L.get_signature_request(req["token"]) is None
+
+
+def test_completed_request_removed_from_pending(L):
+    c = L.add_customer("완료후")
+    req = L.create_signature_request(c["id"], 9000)
+    L.complete_signature_request(req["token"], sig_png())
+    assert L.get_signature_request(req["token"]) is None
+    assert all(not r.get("completed") for r in L.get_pending_requests_for_owner())
+
+
 def test_get_pending_requests(L):
     c = L.add_customer("대기목록")
     L.create_signature_request(c["id"], 50000)
