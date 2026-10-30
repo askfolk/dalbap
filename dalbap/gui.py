@@ -11,11 +11,25 @@ from .web import start_server, customer_url, owner_url
 WIN, MAC = sys.platform.startswith("win"), sys.platform == "darwin"
 FAMILY = "Malgun Gothic" if WIN else "Apple SD Gothic Neo" if MAC else None
 
-# 색상 (엑셀/워드 느낌의 차분한 팔레트)
-BG, CARD, LINE, HEAD = "#f3f4f6", "#ffffff", "#d9dce1", "#eef1f5"
-TEXT, SUB, ACCENT = "#1f2328", "#6b7280", "#1f5fae"
-PLUS, MINUS, ZEBRA, SEL = "#1e7b34", "#b42318", "#f8fafc", "#dbe8f8"
+# 색상 (모던 웹앱 스타일 - 깔끔하고 정돈된 팔레트)
+BG = "#f8fafc"          # 배경 (밝은 회색)
+CARD = "#ffffff"        # 카드 배경
+LINE = "#e2e8f0"        # 테두리 (부드러운 회색)
+HEAD = "#f1f5f9"        # 헤더/섹션 배경
+TEXT = "#1e293b"        # 기본 텍스트 (진한 슬레이트)
+SUB = "#64748b"         # 보조 텍스트 (중간 회색)
+ACCENT = "#2563eb"      # 강조색 (파란색)
+ACCENT_HOVER = "#1d4ed8" # 강조색 호버
+PLUS = "#16a34a"        # 충전 (녹색)
+MINUS = "#dc2626"       # 차감 (빨간색)
+ZEBRA = "#f8fafc"       # 줄무늬 배경
+SEL = "#dbeafe"         # 선택 배경 (연한 파란색)
+HEADER_BG = "#1e40af"   # 상단 바 배경 (진한 파란색)
 won = lambda n: f"{n:,}원"
+
+# 최소 크기 상수
+MIN_CENTER_WIDTH = 500
+MIN_PREVIEW_WIDTH = 200
 
 
 def short(n):
@@ -39,10 +53,95 @@ class Card(tk.Frame):
     def __init__(self, master, title=None, **kw):
         super().__init__(master, bg=CARD, highlightbackground=LINE, highlightthickness=1, **kw)
         if title is not None:
-            h = tk.Frame(self, bg=CARD); h.pack(fill="x", padx=14, pady=(12, 6))
-            self.title_lbl = tk.Label(h, text=title, bg=CARD, fg=TEXT, font="TitleFont"); self.title_lbl.pack(side="left")
+            h = tk.Frame(self, bg=HEAD, highlightbackground=LINE, highlightthickness=1)
+            h.pack(fill="x", padx=1, pady=(1, 0))
+            self.title_lbl = tk.Label(h, text=title, bg=HEAD, fg=TEXT, font="TitleFont")
+            self.title_lbl.pack(side="left", padx=14, pady=10)
             self.header = h
-        self.body = tk.Frame(self, bg=CARD); self.body.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        self.body = tk.Frame(self, bg=CARD)
+        self.body.pack(fill="both", expand=True, padx=16, pady=(12, 14))
+
+
+class SlideNotebook(tk.Frame):
+    """탭 전환 시 좌·우 슬라이드 애니메이션."""
+    def __init__(self, master, active_font=None, inactive_font=None, **kw):
+        super().__init__(master, bg=CARD, **kw)
+        self._active_font = active_font
+        self._inactive_font = inactive_font or active_font
+        self._tab_bar = tk.Frame(self, bg=LINE)
+        self._tab_bar.pack(fill="x")
+        self._tabs_row = tk.Frame(self._tab_bar, bg=CARD)
+        self._tabs_row.pack(fill="x")
+        self._content = tk.Frame(self, bg=CARD)
+        self._content.pack(fill="both", expand=True, pady=(6, 0))
+        self._pages = []
+        self._tab_labels = []
+        self._cur = 0
+        self._animating = False
+
+    def add(self, child, text):
+        idx = len(self._pages)
+        lbl = tk.Label(
+            self._tabs_row, text=text, bg=HEAD, fg=SUB, padx=16, pady=9, cursor="hand2",
+            font=self._inactive_font,
+        )
+        lbl.pack(side="left")
+        lbl.bind("<Button-1>", lambda _e, i=idx: self.select(i))
+        self._tab_labels.append(lbl)
+        child.place(in_=self._content, relx=0, rely=0, relwidth=1, relheight=1)
+        if idx:
+            child.place_forget()
+        else:
+            self._style_tab(0, active=True)
+        self._pages.append(child)
+
+    def tab(self, idx, **kw):
+        if "text" in kw:
+            self._tab_labels[idx].config(text=kw["text"])
+
+    def select(self, idx):
+        if idx < 0 or idx >= len(self._pages) or self._animating or idx == self._cur:
+            return
+        self._animate(self._cur, idx)
+
+    def _style_tab(self, idx, active=False):
+        lbl = self._tab_labels[idx]
+        lbl.config(
+            bg=CARD if active else HEAD,
+            fg=ACCENT if active else SUB,
+            font=self._active_font if active else self._inactive_font,
+        )
+
+    def _animate(self, old, new):
+        self._animating = True
+        old_w, new_w = self._pages[old], self._pages[new]
+        direction = 1 if new > old else -1
+        w = max(self._content.winfo_width(), 320)
+        step = {"n": 0}
+        total = 10
+
+        def tick():
+            t = step["n"] / total
+            ease = 1 - (1 - t) ** 2
+            ox = int(-direction * w * ease)
+            nx = int(direction * w * (1 - ease))
+            old_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=ox, y=0)
+            new_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=nx, y=0)
+            if step["n"] < total:
+                step["n"] += 1
+                self.after(18, tick)
+            else:
+                old_w.place_forget()
+                new_w.place(relx=0, rely=0, relwidth=1, relheight=1)
+                self._cur = new
+                self._animating = False
+                for i in range(len(self._tab_labels)):
+                    self._style_tab(i, active=(i == new))
+
+        for i in range(len(self._tab_labels)):
+            self._style_tab(i, active=(i == new))
+        new_w.place(relx=0, rely=0, relwidth=1, relheight=1, x=direction * w, y=0)
+        tick()
 
 
 def ask_string(title, prompt, initialvalue="", show=None, parent=None):
@@ -240,7 +339,12 @@ class App(tk.Tk):
         st.map("Treeview", background=[("selected", SEL)], foreground=[("selected", TEXT)])
         st.map("Treeview.Heading", background=[("active", "#e2e7ee")])
         st.configure("TButton", padding=(10, 6))
-        st.configure("Accent.TButton", padding=(10, 8), font=self.f_bold)
+        st.configure("Accent.TButton", padding=(10, 8), font=self.f_bold, background=ACCENT, foreground="white")
+        st.map("Accent.TButton", background=[("active", ACCENT_HOVER), ("disabled", LINE)],
+               foreground=[("disabled", SUB)])
+        st.configure("TNotebook", background=CARD, borderwidth=0)
+        st.configure("TNotebook.Tab", padding=(14, 6))
+        st.map("TButton", background=[("active", HEAD)])
         st.configure("TNotebook", background=CARD, borderwidth=0)
         st.configure("TNotebook.Tab", padding=(14, 6))
         st.configure("TLabelframe", background=CARD, bordercolor=LINE)
@@ -254,29 +358,56 @@ class App(tk.Tk):
         self.option_add("*TEntry*Font", "TkTextFont"); self.option_add("*TSpinbox*Font", "TkTextFont")
         self.option_add("*TCombobox*Font", "TkTextFont"); self.option_add("*TCombobox*Listbox.font", "TkTextFont")
 
-    def _tree(self, parent, cols, heads, widths, anchors=None, height=None):
+    def _tree(self, parent, cols, heads, widths, anchors=None, height=None, min_table_width=None):
+        min_table_width = min_table_width or sum(widths) + 32
         wrap = tk.Frame(parent, bg=CARD)
-        tv = ttk.Treeview(wrap, columns=cols, show="headings", height=height or 10)
-        for i, (c, h, w) in enumerate(zip(cols, heads, widths)):
+        wrap.grid_rowconfigure(0, weight=1)
+        wrap.grid_columnconfigure(0, weight=1)
+        canvas = tk.Canvas(wrap, bg=CARD, highlightthickness=0, borderwidth=0)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        hsb = ttk.Scrollbar(wrap, orient="horizontal", command=canvas.xview)
+        inner = tk.Frame(canvas, bg=CARD, width=min_table_width)
+        inner.grid_propagate(True)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        tv = ttk.Treeview(inner, columns=cols, show="headings", height=height or 10)
+        for c, h, w in zip(cols, heads, widths):
             a = (anchors or {}).get(c, "center")
-            tv.heading(c, text=h, anchor=a); tv.column(c, width=w, anchor=a, stretch=c == cols[-1])
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview); tv.configure(yscrollcommand=sb.set)
-        tv.pack(side="left", fill="both", expand=True); sb.pack(side="right", fill="y")
+            tv.heading(c, text=h, anchor=a)
+            tv.column(c, width=w, minwidth=w, anchor=a, stretch=False)
+
+        def _on_inner_configure(_event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(win_id, height=event.height)
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        tv.pack(fill="both", expand=True)
+        canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
         tv.tag_configure("odd", background=ZEBRA)
-        tv.tag_configure("plus", foreground=PLUS); tv.tag_configure("minus", foreground=MINUS)
+        tv.tag_configure("plus", foreground=PLUS)
+        tv.tag_configure("minus", foreground=MINUS)
         tv.tag_configure("muted", foreground="#9aa0a6")
         return wrap, tv
 
     # ---------------- 레이아웃 ----------------
     def _build(self):
         # 상단 제목 줄
-        top = tk.Frame(self, bg=CARD, highlightbackground=LINE, highlightthickness=1); top.pack(fill="x")
+        top = tk.Frame(self, bg=HEADER_BG)
+        top.pack(fill="x")
         if self._app_icon_small:
-            tk.Label(top, image=self._app_icon_small, bg=CARD).pack(side="left", padx=(18, 8), pady=8)
-        tk.Label(top, text="마당", bg=CARD, fg=SUB, font=self.f_bold).pack(side="left", pady=8)
-        tk.Label(top, text="달밥 장부", bg=CARD, fg=ACCENT, font=self.f_big).pack(side="left", padx=(8, 0), pady=8)
-        tk.Label(top, text="월정액 선불 식사 관리", bg=CARD, fg=SUB).pack(side="left", padx=(12, 0), pady=(6, 0))
-        self.clock = tk.Label(top, bg=CARD, fg=SUB); self.clock.pack(side="right", padx=18)
+            tk.Label(top, image=self._app_icon_small, bg=HEADER_BG).pack(side="left", padx=(20, 10), pady=10)
+        tk.Label(top, text="마당", bg=HEADER_BG, fg="#e0e7ff", font=self.f_bold).pack(side="left", pady=10)
+        tk.Label(top, text="달밥 장부", bg=HEADER_BG, fg="white", font=self.f_big).pack(side="left", padx=(10, 0), pady=8)
+        tk.Label(top, text="월정액 선불 식사 관리", bg=HEADER_BG, fg="#bfdbfe", font=self.f_small).pack(
+            side="left", padx=(14, 0), pady=(12, 0))
+        self.clock = tk.Label(top, bg=HEADER_BG, fg="#e0e7ff")
+        self.clock.pack(side="right", padx=20, pady=10)
 
         # 상태 표시줄
         sbar = tk.Frame(self, bg=HEAD, highlightbackground=LINE, highlightthickness=1); sbar.pack(side="bottom", fill="x")
@@ -288,7 +419,8 @@ class App(tk.Tk):
         self.st_msg = tk.Label(sbar, bg=HEAD, fg=ACCENT, padx=12); self.st_msg.pack(side="right")
 
         main = tk.Frame(self, bg=BG); main.pack(fill="both", expand=True, padx=12, pady=12)
-        main.columnconfigure(1, weight=1); main.rowconfigure(0, weight=1)
+        main.columnconfigure(1, weight=1, minsize=MIN_CENTER_WIDTH)
+        main.rowconfigure(0, weight=1)
         self._build_calendar(main); self._build_day(main); self._build_customers(main)
 
     def _build_calendar(self, main):
@@ -326,27 +458,41 @@ class App(tk.Tk):
             tk.Label(f, text=t, bg=HEAD, fg=SUB, font=self.f_small).pack(anchor="w", padx=12, pady=(6, 0))
             v = tk.Label(f, bg=HEAD, fg=c, font="TitleFont"); v.pack(anchor="w", padx=12, pady=(0, 6))
             self.chip[k] = v
-        self.nb = ttk.Notebook(card.body); self.nb.pack(fill="both", expand=True)
+        self.nb = SlideNotebook(card.body, active_font=self.f_bold, inactive_font=self.f_small)
+        self.nb.pack(fill="both", expand=True)
         # 거래 탭
-        t1 = tk.Frame(self.nb, bg=CARD); self.nb.add(t1, text="거래 내역")
-        w, self.dayt = self._tree(t1, ("time", "name", "kind", "amount", "sig", "rc", "memo"),
-                                  ("시간", "손님", "구분", "금액", "✍", "🧾", "메모"), (70, 120, 120, 100, 30, 30, 180),
-                                  {"amount": "e", "memo": "w", "name": "w"})
+        t1 = tk.Frame(self.nb._content, bg=CARD)
+        self.nb.add(t1, text="거래 내역")
+        day_cols = ("time", "name", "kind", "amount", "sig", "rc", "memo")
+        day_widths = (70, 120, 120, 100, 30, 30, 180)
+        w, self.dayt = self._tree(
+            t1, day_cols,
+            ("시간", "손님", "구분", "금액", "✍", "🧾", "메모"), day_widths,
+            {"amount": "e", "memo": "w", "name": "w"},
+            min_table_width=sum(day_widths) + 40,
+        )
         w.pack(fill="both", expand=True, pady=(8, 0))
         bar = tk.Frame(t1, bg=CARD); bar.pack(fill="x", pady=(8, 0))
         ttk.Button(bar, text="선택 거래에 영수증 첨부", command=self.attach_to_tx).pack(side="left")
         ttk.Button(bar, text="선택 거래 취소", command=self.cancel_day_tx).pack(side="right")
         tk.Label(bar, text="취소는 삭제하지 않고 반대 거래로 기록됩니다", bg=CARD, fg=SUB, font=self.f_small).pack(side="right", padx=10)
         # 영수증 탭
-        t2 = tk.Frame(self.nb, bg=CARD); self.nb.add(t2, text="영수증")
-        t2.columnconfigure(0, weight=1); t2.rowconfigure(0, weight=1)
-        w, self.rct = self._tree(t2, ("time", "amount", "name", "memo"), ("등록", "금액", "손님", "메모"),
-                                 (70, 100, 100, 160), {"amount": "e", "memo": "w"})
+        t2 = tk.Frame(self.nb._content, bg=CARD)
+        self.nb.add(t2, text="영수증")
+        t2.columnconfigure(0, weight=1, minsize=MIN_CENTER_WIDTH - MIN_PREVIEW_WIDTH - 24)
+        t2.rowconfigure(0, weight=1)
+        rc_widths = (70, 100, 100, 160)
+        w, self.rct = self._tree(
+            t2, ("time", "amount", "name", "memo"), ("등록", "금액", "손님", "메모"), rc_widths,
+            {"amount": "e", "memo": "w"},
+            min_table_width=sum(rc_widths) + 40,
+        )
         w.grid(row=0, column=0, sticky="nsew", pady=(8, 0))
         self.rct.bind("<<TreeviewSelect>>", lambda e: self.preview())
         self.rct.bind("<Double-1>", lambda e: self.open_receipt())
-        pv = tk.Frame(t2, bg=HEAD, width=300, highlightbackground=LINE, highlightthickness=1)
-        pv.grid(row=0, column=1, sticky="ns", padx=(10, 0), pady=(8, 0)); pv.pack_propagate(False)
+        pv = tk.Frame(t2, bg=HEAD, width=max(300, MIN_PREVIEW_WIDTH), highlightbackground=LINE, highlightthickness=1)
+        pv.grid(row=0, column=1, sticky="ns", padx=(10, 0), pady=(8, 0))
+        pv.grid_propagate(False)
         self.pv = tk.Label(pv, bg=HEAD, fg=SUB, text="영수증을 선택하면\n미리보기가 나타납니다"); self.pv.pack(fill="both", expand=True)
         bar = tk.Frame(t2, bg=CARD); bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Button(bar, text="이 날짜에 영수증 추가", command=self.attach_standalone).pack(side="left")
@@ -826,8 +972,12 @@ class App(tk.Tk):
         if not c: return
         w = tk.Toplevel(self, bg=BG); w.title(f"{c['name']} 님 내역"); w.geometry("820x580")
         card = Card(w, f"{c['name']} 님  ·  잔액 {won(self.L.balance(c['id']))}"); card.pack(fill="both", expand=True, padx=12, pady=12)
-        wrap, tv = self._tree(card.body, ("ts", "kind", "amount", "bal", "memo"), ("일시", "구분", "금액", "잔액", "메모"),
-                              (150, 120, 100, 100, 220), {"amount": "e", "bal": "e", "memo": "w"})
+        hist_widths = (150, 120, 100, 100, 220)
+        wrap, tv = self._tree(
+            card.body, ("ts", "kind", "amount", "bal", "memo"), ("일시", "구분", "금액", "잔액", "메모"),
+            hist_widths, {"amount": "e", "bal": "e", "memo": "w"},
+            min_table_width=sum(hist_widths) + 40,
+        )
         wrap.pack(fill="both", expand=True)
         for i, t in enumerate(self.L.history(c["id"])):
             tags = (["odd"] if i % 2 else []) + ["muted" if t["cancelled"] or t["type"] == "cancel" else ("plus" if t["amount"] > 0 else "minus")]
